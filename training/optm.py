@@ -43,8 +43,8 @@ def loss_summary(total_loss):
         for l in losses + [total_loss]:
             # Name each loss as '(raw)' and name the moving average version of the loss
             # as the original loss name.
-            tf.summary.scalar(l.op.name + ' (raw)', l)
-            tf.summary.scalar(l.op.name, loss_averages.average(l))
+            tf.summary.scalar(l.op.name + ' (raw)', l, collections=['LOSSES'])
+            tf.summary.scalar(l.op.name, loss_averages.average(l), collections=['LOSSES'])
 
     return loss_averages_op
 
@@ -79,7 +79,7 @@ def make_train_op(total_loss, global_step, hparams: dict):
     with tf.control_dependencies([loss_averages_op]):
         if method == 'ADAM':
             print("Using Adam Method.")
-            opt = tf.train.AdamOptimizer()  # default adam optimizer
+            opt = tf.train.AdamOptimizer(hparams['learn_rate'])  # default adam optimizer
         elif method == 'GRAD':
             # Compute gradients.
             if 'decay_rate' in hparams:
@@ -101,10 +101,6 @@ def make_train_op(total_loss, global_step, hparams: dict):
             raise ValueError("Unknown training method")
         grads = opt.compute_gradients(total_loss)
 
-    # Cap the gradients to avoid overflow crashes
-    capped_grads = [(tf.clip_by_value(gv[0], -100.0, 100.0), gv[1]) for gv in grads]
-    # Apply gradients. global_step incremented by 1
-    apply_gradient_op = opt.apply_gradients(capped_grads, global_step=global_step)
 
     # Add histograms for trainable variables.
     # for var in tf.trainable_variables():
@@ -112,9 +108,20 @@ def make_train_op(total_loss, global_step, hparams: dict):
 
     # Add histograms for gradients.
     with tf.name_scope('grads'):
+        with tf.name_scope('clipping'):
+            # Cap the gradients to avoid overflow crashes
+            capped_grads = \
+                [
+                    (tf.clip_by_value(gv[0], -100.0, 100.0)
+                     if gv[0] is not None else None,
+                     gv[1])
+                    for gv in grads]
+
+        # Apply gradients. global_step incremented by 1
+        apply_gradient_op = opt.apply_gradients(capped_grads, global_step=global_step)
         for grad, var in capped_grads:
             if grad is not None:
-                tf.summary.histogram(var.op.name, grad)
+                tf.summary.histogram(var.op.name, grad, collections=['GRADIENTS'])
 
     # Track the moving averages of all trainable variables.
     #variable_averages = tf.train.ExponentialMovingAverage(

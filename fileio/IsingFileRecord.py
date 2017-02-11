@@ -11,6 +11,108 @@ def make_queue(filenames):
     return tf.train.string_input_producer(filenames)
 
 
+def _tc_class_tensor(t, tc, a, b):
+    """
+    Tensor expression:
+        if t < tc return a, else b
+    :param t:
+    :param tc:
+    :param a:
+    :param b:
+    :return:
+    """
+    return tf.select(
+        tf.less(t, tc, name='CMP_LT'+str(tc)),
+        tf.constant(a, dtype=tf.int32),
+        tf.constant(b, dtype=tf.int32),
+        name='SELECT_LT'+str(tc))
+
+
+class IsingFileConfig:
+    def __init__(self, ising_config: dict):
+        self.L = ising_config['L']
+        self.dim = ising_config['dim']
+        self.replicas_per_instance = ising_config['reps_per_inst']
+        self.instances_per_example = ising_config['insts_per_exmp']
+        self.batch_size = ising_config['batch_size']
+        self.num_threads = ising_config.get('threads', 1)
+
+
+class IsingFileReader:
+    """
+    An IFR expects a filename queue of binary files output from a MC simulation with the following structure
+    Header:
+        * 00-03 L Ising model length, int32
+        * 04-07 K Number of configurations in the file, int32
+        * 08-0B t Index of the temperature of the configurations (T_ARR_1), int32
+        * 0C-0F T the temperature simulated at (should be T_ARR_1[t]), float32
+    Body:
+        * 10 - ... A list of K configurations of LxL integers (float32), each of which is +1.0 or -1.0
+    """
+    def __init__(self, queue,
+                 isfc: IsingFileConfig,
+                 name="IsingFileReader"):
+        self._q = queue
+        self._name = name
+
+        self._reader = tf.WholeFileReader(name=self._name)
+        self.key, value = self._reader.read(self._q)
+        self._in_bytes = tf.decode_raw(value, tf.uint8)
+
+        self.l = tf_int32_from_bytes(self._in_bytes, 0)
+        self.k = tf_int32_from_bytes(self._in_bytes, 4)
+        self.t_indx = tf_int32_from_bytes(self._in_bytes, 8)
+        self.t = tf_float_from_bytes(self._in_bytes, 12)
+
+        self.states = \
+            tf.bitcast(
+                tf.reshape(
+                    tf.slice(self._in_bytes, [16], [-1]),
+                    [self.k, -1, 4]),
+                tf.float32)
+        # shuffle the states
+        self.states = tf.random_shuffle(self.states)
+        c = isfc.replicas_per_instance
+        self.states = self.states[0:c, ...]
+
+        self.example_tensor = [
+            self.states,  self.t_indx, self.t]
+        self.example_shapes = [
+            [c, isfc.L ** isfc.dim], [], []]
+
+    def _assign_labels(self):
+        self.indx = tf.fill([self._batch_len], self.t_indx)
+        self.temps = tf.fill([self._batch_len], self._t)
+        self.label = \
+            tf.fill(
+                [self._batch_len],
+                tf.select(
+                    tf.less(self._t, self._tc_tensor),
+                    tf.constant(1, dtype=tf.int32),
+                    tf.constant(0, dtype=tf.int32)))
+
+
+class IsFRBatch:
+    """
+    takes the input from an ifr file as a single example, and outputs a shuffled
+    batch
+    """
+    def __init__(self, ifr: IsingFileReader, ifc: IsingFileConfig):
+        ipe = ifc.instances_per_example
+        self._min_examples = 5*ipe
+        self._capacity = self._min_examples + 10 * ipe
+        # Note: The shape of an example is [C, N]
+        self.state_example_shape = ifr.example_shapes[0]
+        # Enqueue the read contents of a single file as a single example
+        self.state_batch, self.index_batch, self.temp_batch = \
+            tf.train.shuffle_batch(
+                ifr.example_tensor,
+                batch_size=ipe,  capacity=self._capacity,
+                min_after_dequeue=self._min_examples,
+                enqueue_many=False,
+                shapes=ifr.example_shapes, name="IfrBatch")
+
+
 class IsingFileRecordBase:
     """
     Mostly private interface for an IFR class.
@@ -239,6 +341,104 @@ class IsingBatch:
                 shapes=ifr.expected_tensor_shape(ising_l), name="IsingBatch")
 
 
+class ExampleSubClassQueue:
+    def __init__(self, filename_pattern, label_lambda, class_queue_index,
+                 isfc: IsingFileConfig, subname="SubClassQ"):
+        with tf.name_scope(subname):
+            # Gather list of matching filenames
+            self.filenames = glob.glob(filename_pattern)
+            # create a queue of filenames (string tensors)
+            self.filename_queue = make_queue(self.filenames)
+            # Reader for each file
+            # tensor shape read is [R, N]
+            self.isfr = IsingFileReader(self.filename_queue, isfc)
+            rpi = isfc.replicas_per_instance
+            ipe = isfc.instances_per_example
+            # Enqueues each read tensor as a single example
+            # Shuffles and dequeues a batch tensor of shape [I, R, N]
+            # which is treated again a single example
+            self.isfbatch = IsFRBatch(self.isfr, isfc)
+            capacity = 20*isfc.batch_size
+            min_ex = 10*isfc.batch_size
+            #self.example_shape = [ipe]+self.isfbatch.state_example_shape
+            #enqueue a batch (sample) of instances as a single example
+            # Enqueues the example with all appropriate labels
+            self.sub_queue = tf.train.shuffle_batch(
+                [self.isfbatch.state_batch,
+                 self.isfbatch.index_batch[0],
+                 self.isfbatch.temp_batch[0],
+                 label_lambda(self.isfbatch.temp_batch[0]),
+                 tf.constant(class_queue_index, dtype=tf.int32)],
+                isfc.batch_size, capacity, min_ex,
+                enqueue_many=False
+                #shapes=[self.example_shape, [], [], [], []]
+            )
+
+
+class ExampleClassQueue:
+    def __init__(self, file_patterns, label_lambda,
+                 class_index, isfc: IsingFileConfig, name='ClassQ'):
+        with tf.name_scope(name):
+            self.subclasses = []
+            self.subqueues = []
+            for f in file_patterns:
+                c = ExampleSubClassQueue(
+                    f, label_lambda, class_index, isfc)
+                self.subclasses.append(c)
+                self.subqueues.append(c.sub_queue)
+            self.b_size = isfc.batch_size
+            self.queue = tf.train.shuffle_batch_join(
+                self.subqueues, self.b_size,
+                capacity=20*self.b_size, min_after_dequeue=5*self.b_size,
+                enqueue_many=True)
+
+
+class TheExampleQueue:
+    def __init__(self, file_pattern_lists, label_lambdas, isfc: IsingFileConfig):
+        self._num_classes = len(file_pattern_lists)
+        assert len(file_pattern_lists) == len(label_lambdas)
+
+        self.capacity = isfc.batch_size * 20 * self._num_classes
+        self.min_enqueued = isfc.batch_size * 5 * self._num_classes
+
+        self._queue_classes = []
+        self._subqueues = []
+        for i in range(self._num_classes):
+            qc = ExampleClassQueue(
+                file_pattern_lists[i], label_lambdas[i], i, isfc)
+            self._queue_classes.append(qc)
+            self._subqueues.append(qc.queue)
+        self.state, self.indices, self.temps,\
+            self.label, self.q_index = \
+            tf.train.shuffle_batch_join(
+                self._subqueues, isfc.batch_size,
+                self.capacity, self.min_enqueued, enqueue_many=True
+        )
+
+
+def three_phase_input(data_roots, num_temps_array,
+                      tc_triplets, isfc: IsingFileConfig ):
+    num_classes = len(num_temps_array)
+    assert num_classes == len(data_roots)
+    assert num_classes == len(tc_triplets)
+
+    filenames_lists = []
+    lambdas = []
+    for i in range(num_classes):
+        class_filenames = []
+        for t in range(num_temps_array[i]):
+            class_filenames.append(
+                os.path.join(
+                    data_roots[i], '*.t{0}.*.bin'.format(t)))
+        filenames_lists.append(class_filenames)
+
+        trpl = tc_triplets[i]
+        the_lambda = lambda x, v=trpl: _tc_class_tensor(x, v[0], v[1], v[2])
+        lambdas.append(the_lambda)
+    q = TheExampleQueue(filenames_lists, lambdas, isfc)
+    return q
+
+
 def ising_2d_input(data_root, batch_size, min_examples_enqueued, ising_l):
     filenames = glob.glob(
         os.path.join(data_root, "**", "*.bin"), recursive=True)
@@ -267,8 +467,20 @@ def sg_3d_multi_input(data_root, num_channels, batch_size, min_examples_enqueued
     with tf.name_scope('ExampleReader'):
         filename_queue = make_queue(filenames)
         ifr = GroupingIsingFileRecord(filename_queue, num_channels, SGEA_3D_T_C, 3,
-                                      transpose_chan=False)
+                                      transpose_chan=True)
         ising_batch = IsingBatch(ifr, ising_l,
                                  batch_size, min_examples_enqueued, enqueue_many=True)
 
     return ising_batch
+
+
+def sg_3d_tbatch_input(data_root, t_range, num_c, batch_size,
+                       min_examples_enqueued, ising_l):
+    filenames = []
+    for t in t_range:
+        filenames.append(glob.glob(
+            os.path.join(data_root, "**", "*.t%d.*.bin")).__format__(t))
+    with tf.name_scope('ExampleReaders'):
+        queues = []
+        for fns in filenames:
+            queues.append(make_queue(fns))

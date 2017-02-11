@@ -11,6 +11,8 @@ def _make_activation(z: tf.Tensor, activation: str, name=None):
         actv = tf.nn.elu(z, name=name)
     elif activation == 'SIGM':
         actv = tf.nn.sigmoid(z, name=name)
+    elif activation == 'TANH':
+        actv = tf.nn.tanh(z, name=name)
     elif activation == 'NONE':
         actv = tf.identity(z, name=name)
     else:
@@ -150,7 +152,7 @@ class Conv3DLayer:
     def __init__(self, in_channels: int, out_channels: int, config: IsingConfig,
                  name='Convolution3D', activation='RELU', pooling_type='MAX',
                  pool_lens=_default_3d_pooling,
-                 kern_cfg=_default_3d_kern,
+                 kern_cfg=_default_3d_kern, init_bias=1.0, init_w_sd=0.1,
                  bc='VALID'):
         """
 
@@ -179,8 +181,8 @@ class Conv3DLayer:
         self._name = name
         with tf.variable_scope(self._name):
             self._Kernel = init_decay_weights_2(
-                'Kernel', self._ker_shape, 1.0, config.weight_decay)
-            self._Bias = init_biases_2('Bias', out_channels, 2.0)
+                'Kernel', self._ker_shape, init_w_sd, config.weight_decay)
+            self._Bias = init_biases_2('Bias', out_channels, init_bias)
 
     def _inner_eval(self, tensor: tf.Tensor):
         conv = tf.nn.conv3d(
@@ -189,10 +191,11 @@ class Conv3DLayer:
         actv = _make_activation(z, self._activation)
         pooled = _perform_3d_pooling(
             actv, self._pool_len, self._pool_stride, self._pooling)
-        tf.summary.histogram('activation', pooled)
+        tf.summary.histogram('activation', pooled, collections=['STATS'])
         if self._activation == 'RELU':
             tf.summary.scalar(
-                'actv_sparsity', tf.nn.zero_fraction(pooled))
+                'actv_sparsity', tf.nn.zero_fraction(pooled),
+                collections=['STATS'])
         return pooled
 
     def evaluate(self, tensor: tf.Tensor, scope=True):
@@ -207,7 +210,7 @@ class Conv3DLayer:
 
 def flatten_batch(in_tensor: tf.Tensor):
     batch_sz = in_tensor.get_shape().as_list()[0]
-    flat = tf.reshape(in_tensor, [batch_sz, -1])
+    flat = tf.reshape(in_tensor, [batch_sz, -1], name='flatten')
     return flat
 
 
@@ -223,7 +226,7 @@ def fully_connected_layer(in_tensor: tf.Tensor,
     """
     k = in_tensor.get_shape().as_list()[1]
     w_shape = [k, size]
-    w = init_decay_weights('weights', w_shape, 0.5,
+    w = init_decay_weights('weights', w_shape, 0.01,
                            config.weight_decay, config.is_training)
     b = init_biases('biases', size, 1.0, config.is_training)
     z = tf.nn.bias_add(tf.matmul(in_tensor, w), b)
@@ -234,7 +237,8 @@ def fully_connected_layer(in_tensor: tf.Tensor,
 
 class FullyConnectedLayer:
     def __init__(self, input_size, output_size,
-                 config: IsingConfig, name='FullyConnected', activation='RELU', bias_stren=2.0):
+                 config: IsingConfig, name='FullyConnected',
+                 activation='RELU', init_bias=2.0, init_w_sd=1.0):
         self._name = name
         self._in = input_size
         self._out = output_size
@@ -242,16 +246,18 @@ class FullyConnectedLayer:
         self._activation = activation
         with tf.variable_scope(self._name):
             self._W = init_decay_weights_2(
-                'Weights', self._w_shape, 1.0, config.weight_decay)
-            self._Bias = init_biases_2('Bias', self._out, bias_stren)
+                'Weights', self._w_shape, init_w_sd, config.weight_decay)
+
+            self._Bias = init_biases_2('Bias', self._out, init_bias)
 
     def _inner_eval(self, tensor: tf.Tensor):
         z = tf.nn.bias_add(tf.matmul(tensor, self._W), self._Bias)
+
         actv = _make_activation(z, self._activation)
-        tf.summary.histogram('activation', actv)
+        tf.summary.histogram('activation', actv, collections=['STATS'])
         if self._activation == 'RELU':
             tf.summary.scalar(
-                'actv_sparsity', tf.nn.zero_fraction(actv))
+                'actv_sparsity', tf.nn.zero_fraction(actv), collections=['STATS'])
         return actv
 
     def evaluate(self, tensor: tf.Tensor, scoped=True):

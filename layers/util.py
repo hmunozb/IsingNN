@@ -25,7 +25,7 @@ def init_decay_weights(name, shape, stddev, wd, training=False):
         tf.add_to_collection('losses', weight_decay)
         print('L2 Loss will be added for ', var.op.name)
     if training:
-        tf.summary.histogram(name, var)
+        tf.summary.histogram(name, var, collections=['TRAINABLE'])
     return var
 
 
@@ -37,7 +37,7 @@ def init_decay_weights_2(name, shape, stddev, wd):
         weight_decay = tf.mul(tf.nn.l2_loss(var), wd, name='weight_loss')
         tf.add_to_collection('losses', weight_decay)
         print('L2 Loss will be added for ', var.op.name)
-    tf.summary.histogram(name+'/hist', var)
+    tf.summary.histogram(name+'/hist', var, collections=['TRAINABLE'])
     return var
 
 
@@ -50,7 +50,7 @@ def init_const_weights(name, shape, val, wd):
         weight_decay = tf.mul(tf.nn.l2_loss(var), wd, name='weight_loss')
         tf.add_to_collection('losses', weight_decay)
         print('L2 Loss will be added for ', var.op.name)
-    tf.summary.histogram(name+'/hist', var)
+    tf.summary.histogram(name+'/hist', var, collections=['TRAINABLE'])
     return var
 
 
@@ -71,6 +71,9 @@ def init_biases(name, len, strength, training=False, init='CONST'):
 
 
 def init_biases_2(name, len, strength, init='CONST'):
+    if strength is None:
+        return tf.constant(0.0, shape=[len])
+
     if init == 'CONST':
         init = tf.constant_initializer(strength, tf.float32)
     elif init == 'GAUSN':
@@ -79,7 +82,7 @@ def init_biases_2(name, len, strength, init='CONST'):
         raise ValueError("Unknown value for init: {}".format(init))
     var = tf.get_variable(name, [len],
                           initializer=init, dtype=tf.float32)
-    tf.summary.histogram(name+'/hist', var)
+    tf.summary.histogram(name+'/hist', var, collections=['TRAINABLE'])
 
     return var
 

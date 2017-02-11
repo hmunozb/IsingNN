@@ -75,13 +75,112 @@ def _eval_once(test_op, batch: IsingFileRecord.IsingBatch,
     #print(count_t_less_TC)
     #print(totals)
     result = TestResult(batch_t_correct, count_t_less_TC, totals, config)
-    logging.info("Accuracies:\n"+np.array2string(
-            result.t_accuracies, 30, 4, separator='\t'))
+    t1, t2 = result.t_accuracies[:config.tc_partition+1], \
+             result.t_accuracies[config.tc_partition+1:]
+    logging.info("Accuracies:\n"
+                 + np.array2string(t1, 30, 4, separator='\t')+'\n'
+                 + np.array2string(t2, 30, 4, separator='\t'))
     return result
 
 
 def make_global_step():
     return tf.Variable(0, trainable=False, name='global_step')
+
+
+def train_and_test_model_2(
+        training_op: tf.Operation,
+        evaluate_fn,
+        summary_op: tf.Operation,
+        config: GlobalConfig):
+    pass
+
+
+class TheTrainer:
+    def __init__(self, train_directory, config: GlobalConfig):
+        self.sess = tf.Session()
+        self._dir = train_directory
+        self.sum_writer = None
+        self.checkpoint_saver = None
+        self.step = make_global_step()
+        self.config = config
+        self.max_steps = config.max_steps
+
+    def _init_saver(self):
+        self.checkpoint_saver = tf.train.Saver()
+        self._load_or_init()
+        self.sum_writer = tf.summary.FileWriter(
+            self._dir, tf.get_default_graph())
+
+    def _load_or_init(self):
+        ckpt = tf.train.get_checkpoint_state(FLAGS.train_dir)
+        if ckpt and ckpt.model_checkpoint_path:
+            if FLAGS.resume_training:
+                print('Starting training from checkpoint.')
+                self.checkpoint_saver.restore(
+                    self.sess, ckpt.model_checkpoint_path)
+                return
+            if FLAGS.eval:
+                print('Loading from Checkpoint.')
+                self.checkpoint_saver.restore(
+                    self.sess, ckpt.model_checkpoint_path)
+                return
+        print('Initializing...')
+        self.sess.run(tf.global_variables_initializer())
+
+    def evaluate(self):
+        pass
+
+    def log(self):
+        pass
+
+    def summarize(self):
+        pass
+
+    def save_checkpoint(self):
+        self.checkpoint_saver.save(self.sess, self._dir+'/chk')
+
+    def train_loop(self, training_op: tf.Operation, summary_op: tf.Operation):
+        self.sum_writer.add_session_log(
+            tf.SessionLog(status=tf.SessionLog.START))
+        with self.sess.as_default():
+            # initialization
+            coord = tf.train.Coordinator()  # start coordinator and threads for queues
+            threads = tf.train.start_queue_runners(
+                sess=self.sess, coord=coord)
+            # training loop
+            for step in range(self.max_steps):
+                i = self.step.eval()  # the current step
+                # evaluate
+                if i % self.config.eval_freq == 0:
+                    self.evaluate()
+                    # run training and summary
+                _, summary = self.sess.run([training_op, summary_op])
+                # sess.run(training_op)
+                if i % self.config.sum_save_freq == 0:
+                    self.sum_writer.add_summary(summary, i)
+                # log every so often
+                if step % self.config.log_freq == 0:
+                    self.log()
+                    # print("Step ", i, ": ", last_eval_accuracy.eval())
+                    self.save_checkpoint()
+            coord.request_stop()
+            coord.join(threads, stop_grace_period_secs=60)
+            self.sum_writer.add_session_log(
+                tf.SessionLog(status=tf.SessionLog.STOP))
+
+    def eval_loop(self):
+        with self.sess.as_default():
+            pass
+
+
+    def finalize(self):
+            # final evaluation
+            self.evaluate()
+            #acc_sum = sess.run(acc_sum_op)
+            #sum_writer.add_summary(acc_sum, config.max_steps)
+            # final checkpoint
+            self.save_checkpoint()
+
 
 
 def train_and_test_model(training_op: tf.Operation,

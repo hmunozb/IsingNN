@@ -58,6 +58,7 @@ class GlobalConfig:
             self.eval_freq = d['eval_freq']
             self.sum_save_freq = d['sum_save_freq']
             self.num_temps = d['num_temps']
+            self.tc_partition = d.get('t_part', 0)
             self.log_freq = None
             if 'log_freq' in d:
                 self.log_freq = d['log_freq']
