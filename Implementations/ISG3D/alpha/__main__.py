@@ -4,7 +4,7 @@ from nets import sg_3d
 from fileio import IsingFileRecord
 from training import optm
 from training import train_model
-from Implementations.ISG3D.MCCNN1 import net
+#from Implementations.ISG3D.MCCNN1 import net
 
 import tensorflow as tf
 import numpy as np
@@ -176,64 +176,64 @@ class AlphaTrainer(train_model.TheTrainer):
         self.train_loop(self.train, self.summary_op )
 
 
-def train():
-    global_config = GlobalConfig(settings)
-    IsingFileRecord.IsingFileConfig(settings)
-
-    ising_l = FLAGS.ising_l
-    epoch_size = FLAGS.epoch_size
-    chans = hparams['num_in_chans']
-    eval_epoch_size = epoch_size
-
-    if FLAGS.eval_epoch_size > 0:
-        eval_epoch_size = FLAGS.eval_epoch_size
-    min_q_examples = int(settings['enqueue_frac']*epoch_size)
-    if FLAGS.batch_size > 0:
-        global_config.batch_size = FLAGS.batch_size
-
-    g = tf.Graph()
-
-    print('Epoch Size: ', epoch_size)
-    print('Batch Size: ', global_config.batch_size)
-    print('Traning Steps: ', global_config.max_steps)
-    with g.as_default():
-        #  gradient descent algorithm
-        #training_config = optm.grad_desc_config(
-         #   hparams['learn_rate'])
-        global_step = train_model.make_global_step()
-        #training operation
-        alt_cnn_net = net.ISGQCNN(hparams['num_in_chans'])
-        with tf.name_scope('training'):
-            batch = IsingFileRecord.sg_3d_multi_input(
-                FLAGS.input_dir, chans, global_config.batch_size,
-                min_q_examples, ising_l)
-            logits = alt_cnn_net.evaluate(batch.state, training=True)
-            loss = optm.loss_function(logits, batch.label)
-            train = optm.make_train_op(loss, global_step, hparams)
-            # image summary
-            with tf.name_scope('img'):
-                snap = tf.mul(batch.state[:, 0, ...], batch.state[:, 1, ...])
-                snap = tf.reduce_mean(snap, axis=-1)
-                snap = tf.expand_dims(snap, axis=-1)
-                snap = tf.cast(tf.add(tf.mul(snap, 126), 127), tf.uint8)
-                #snap = tf.cast(tf.mul(snap, 126), tf.uint8)
-            tf.summary.image('glass', snap, max_outputs=20)
-
-        #tf.get_variable_scope().reuse_variables()
-        with tf.name_scope('testing'):
-            test_batch = IsingFileRecord.sg_3d_multi_input(
-                FLAGS.eval_input_dir, chans, global_config.batch_size,
-                min_q_examples, ising_l)
-            eval_logits = alt_cnn_net.evaluate(test_batch.state)
-
-        results = train_model.train_and_test_model(
-            train, eval_logits, global_step, test_batch, global_config)
-    arr = np.array([T_ARR_1, results.pct_below_tc, results.t_accuracies]).transpose()
-    print('*** RESULTS *** ')
-    for v in arr:
-        print("{:.3}: {:.2%} at {:.2%}".format(
-            v[0], v[1], v[2]))
-    np.savetxt(str(FLAGS.train_dir)+"/Ts.csv", arr, delimiter=',')
+# def train():
+#     global_config = GlobalConfig(settings)
+#     IsingFileRecord.IsingFileConfig(settings)
+# 
+#     ising_l = FLAGS.ising_l
+#     epoch_size = FLAGS.epoch_size
+#     chans = hparams['num_in_chans']
+#     eval_epoch_size = epoch_size
+#
+#     if FLAGS.eval_epoch_size > 0:
+#         eval_epoch_size = FLAGS.eval_epoch_size
+#     min_q_examples = int(settings['enqueue_frac']*epoch_size)
+#     if FLAGS.batch_size > 0:
+#         global_config.batch_size = FLAGS.batch_size
+#
+#     g = tf.Graph()
+#
+#     print('Epoch Size: ', epoch_size)
+#     print('Batch Size: ', global_config.batch_size)
+#     print('Traning Steps: ', global_config.max_steps)
+#     with g.as_default():
+#         #  gradient descent algorithm
+#         #training_config = optm.grad_desc_config(
+#          #   hparams['learn_rate'])
+#         global_step = train_model.make_global_step()
+#         #training operation
+#         alt_cnn_net = net.ISGQCNN(hparams['num_in_chans'])
+#         with tf.name_scope('training'):
+#             batch = IsingFileRecord.sg_3d_multi_input(
+#                 FLAGS.input_dir, chans, global_config.batch_size,
+#                 min_q_examples, ising_l)
+#             logits = alt_cnn_net.evaluate(batch.state, training=True)
+#             loss = optm.loss_function(logits, batch.label)
+#             train = optm.make_train_op(loss, global_step, hparams)
+#             # image summary
+#             with tf.name_scope('img'):
+#                 snap = tf.mul(batch.state[:, 0, ...], batch.state[:, 1, ...])
+#                 snap = tf.reduce_mean(snap, axis=-1)
+#                 snap = tf.expand_dims(snap, axis=-1)
+#                 snap = tf.cast(tf.add(tf.mul(snap, 126), 127), tf.uint8)
+#                 #snap = tf.cast(tf.mul(snap, 126), tf.uint8)
+#             tf.summary.image('glass', snap, max_outputs=20)
+#
+#         #tf.get_variable_scope().reuse_variables()
+#         with tf.name_scope('testing'):
+#             test_batch = IsingFileRecord.sg_3d_multi_input(
+#                 FLAGS.eval_input_dir, chans, global_config.batch_size,
+#                 min_q_examples, ising_l)
+#             eval_logits = alt_cnn_net.evaluate(test_batch.state)
+#
+#         results = train_model.train_and_test_model(
+#             train, eval_logits, global_step, test_batch, global_config)
+#     arr = np.array([T_ARR_1, results.pct_below_tc, results.t_accuracies]).transpose()
+#     print('*** RESULTS *** ')
+#     for v in arr:
+#         print("{:.3}: {:.2%} at {:.2%}".format(
+#             v[0], v[1], v[2]))
+#     np.savetxt(str(FLAGS.train_dir)+"/Ts.csv", arr, delimiter=',')
 
 
 def train_2():
