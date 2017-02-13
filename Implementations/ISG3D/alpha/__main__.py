@@ -47,24 +47,24 @@ def _label_fn(cls):
 settings = {
     'L': 8,
     'dim': 3,
-    'reps_per_inst': 8,
-    'insts_per_exmp': 6,
+    'reps_per_inst': 2,
+    'insts_per_exmp': 16,
     'batch_size':   4,
 
     'max_steps':       500,
-    'eval_steps':  8,
+    'eval_steps':  16,
     'eval_freq': 50,
-    'sum_save_freq': 1,
+    'sum_save_freq': 5,
     'num_temps': len(T_ARR_1),
     't_part': len(T_ARR_HI) - 1,
-    'log_freq': 10,
+    'log_freq': 5,
     'enqueue_frac': 0.05  # fraction of epoch size that should be enqueued at all times
 }
 
 hparams = {
     'train_method': 'MOMNT',  # 'GRAD', 'MOMNT', 'EXPD', or 'ADAM'
-    'learn_rate': 1.0e-2,
-    'momentum': 0.5,
+    'learn_rate': 1.0e-3,
+    'momentum': 0.9,
     'fc_size':  64,
     'num_in_chans': 2
 }
@@ -110,7 +110,7 @@ class AlphaTrainer(train_model.TheTrainer):
                 [[TC_SPINGLASS, SPINGLASS_CLASS, PARAMAG_CLASS],
                  [TC_FERROMAGNET, FERROMAG_CLASS, PARAMAG_CLASS]],
                 self.isfc)
-            logits = alt_cnn_net.evaluate(self.batch.state)
+            logits = alt_cnn_net.evaluate(self.batch.state, training=True)
             loss = optm.loss_function(logits, self.batch.label)
             self.train = optm.make_train_op(loss, self.step, hparams)
             # image summary
@@ -124,7 +124,7 @@ class AlphaTrainer(train_model.TheTrainer):
                 [[TC_SPINGLASS, SPINGLASS_CLASS, PARAMAG_CLASS],
                  [TC_FERROMAGNET, FERROMAG_CLASS, PARAMAG_CLASS]],
                 self.isfc)
-            self.eval_logits = alt_cnn_net.evaluate(self.test_batch.state)
+            self.eval_logits = alt_cnn_net.evaluate(self.test_batch.state, training=False)
         self.summary_op = tf.summary.merge(
             [   tf.summary.merge_all('STATS'), tf.summary.merge_all('TRAINABLE'),
                 tf.summary.merge_all('GRADIENTS'), tf.summary.merge_all('LOSSES')])

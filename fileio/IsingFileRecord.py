@@ -358,8 +358,8 @@ class ExampleSubClassQueue:
             # Shuffles and dequeues a batch tensor of shape [I, R, N]
             # which is treated again a single example
             self.isfbatch = IsFRBatch(self.isfr, isfc)
-            capacity = 20*isfc.batch_size
-            min_ex = 10*isfc.batch_size
+            capacity = 10*isfc.batch_size
+            min_ex = 5*isfc.batch_size
             #self.example_shape = [ipe]+self.isfbatch.state_example_shape
             #enqueue a batch (sample) of instances as a single example
             # Enqueues the example with all appropriate labels
@@ -389,7 +389,7 @@ class ExampleClassQueue:
             self.b_size = isfc.batch_size
             self.queue = tf.train.shuffle_batch_join(
                 self.subqueues, self.b_size,
-                capacity=20*self.b_size, min_after_dequeue=5*self.b_size,
+                capacity=10*self.b_size, min_after_dequeue=5*self.b_size,
                 enqueue_many=True)
 
 
@@ -398,8 +398,8 @@ class TheExampleQueue:
         self._num_classes = len(file_pattern_lists)
         assert len(file_pattern_lists) == len(label_lambdas)
 
-        self.capacity = isfc.batch_size * 20 * self._num_classes
-        self.min_enqueued = isfc.batch_size * 5 * self._num_classes
+        self.capacity = isfc.batch_size * 5 * self._num_classes
+        self.min_enqueued = isfc.batch_size * 1 * self._num_classes
 
         self._queue_classes = []
         self._subqueues = []

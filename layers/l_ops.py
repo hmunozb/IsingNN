@@ -13,6 +13,8 @@ def _make_activation(z: tf.Tensor, activation: str, name=None):
         actv = tf.nn.sigmoid(z, name=name)
     elif activation == 'TANH':
         actv = tf.nn.tanh(z, name=name)
+    elif activation == 'ABS':
+        actv = tf.abs(z, name=name)
     elif activation == 'NONE':
         actv = tf.identity(z, name=name)
     else:

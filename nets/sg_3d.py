@@ -4,7 +4,7 @@ from _ising_config import *
 from layers import prepr
 from layers import util
 import numpy as np
-
+import math
 
 def cnn1(state: tf.Tensor, training=False):
     per_state = prepr.periodicize_3d_batch(state, 2)
@@ -86,30 +86,38 @@ class MultiInstanceConv3D(SGNNBase):
     """
     def __init__(self, name='MIC3'):
         self._config = IsingConfig()
-        self._config.weight_decay = 0.001
+        self._config.weight_decay = None
         self._name = name
 
         with tf.variable_scope(self._name):
             self._convs = [
                 l_ops.Conv3DLayer(
-                    1, 32, self._config, name='Conv1', activation='ELU',
-                    pooling_type='MAX', kern_cfg=[2, 1],
-                    init_bias=0.2, init_w_sd=0.1),
+                    1, 24, self._config, name='Conv1', activation='TANH',
+                    pooling_type='MAX', kern_cfg=[3, 1], pool_lens=[2, 2],
+                    init_bias=0.0, init_w_sd=math.sqrt(2.0/27.0)),
                 l_ops.Conv3DLayer(
-                    32, 16, self._config, name='Conv2', activation='ELU',
-                    pooling_type='MAX', kern_cfg=[2, 1],
-                    init_bias=0.2, init_w_sd=0.1
-                )
+                    24, 32, self._config, name='Conv2', activation='RELU',
+                    pooling_type='MAX', kern_cfg=[2, 1], pool_lens=[2, 2],
+                    init_bias=0.1, init_w_sd=math.sqrt(2.0/(24*8)) ),
+                l_ops.Conv3DLayer(
+                    32, 40, self._config, name='Conv3', activation='RELU',
+                    pooling_type='NONE', kern_cfg=[2, 2],
+                    init_bias=0.1, init_w_sd=math.sqrt(2.0/(32*8))),
+                l_ops.Conv3DLayer(
+                    40, 3, self._config, name='class_conv', activation='ELU',
+                    pooling_type='NONE', kern_cfg=[1, 1],
+                    init_bias=0.1, init_w_sd=math.sqrt(2.0/(40)))
             ]
-            self._rep_fc = l_ops.FullyConnectedLayer(
-                16*8, 512, self._config, activation='NONE', name='fc1',
-                init_bias=.1, init_w_sd=0.1)
+            #self._rep_fc = l_ops.FullyConnectedLayer(
+             #   64*8, 1024, self._config, activation='ELU', name='fc1',
+              #  init_bias=0.01, init_w_sd=math.sqrt(2.0/(64*8)))
             #self._inst_fc = l_ops.FullyConnectedLayer(
-             #   512, 512, self._config, activation='NONE', name='fc2',
-              #  init_bias=10.0)
-            self._fc3 = l_ops.FullyConnectedLayer(
-                512, 3, self._config, activation='NONE',
-                init_bias=None, name='fc3', init_w_sd=0.1)
+             #   256, 128, self._config, activation='RELU', name='fc2',
+              #  init_bias=0.01, init_w_sd=math.sqrt(2.0/256))
+            #self._fc3 = l_ops.FullyConnectedLayer(
+             #   1024, 3, self._config, activation='NONE',
+              #  init_bias=None, name='fc3',
+               # init_w_sd=math.sqrt(1.0/1024))
 
     def evaluate(self, tensor: tf.Tensor, training=False):
         """
@@ -126,17 +134,28 @@ class MultiInstanceConv3D(SGNNBase):
             new_shape = [flt[0]*flt[1]*flt[2]]+[8,8,8,1]
             tensor = tf.reshape(tensor, new_shape)
 
-            tensor = prepr.periodicize_3d_batch(tensor, 3)
+            tensor = prepr.periodicize_3d_batch(tensor, 2)
             conv1 = self._convs[0].evaluate(tensor)
-            #conv1 = prepr.periodicize_3d_batch(conv1, 1)
+            conv1 = prepr.periodicize_3d_batch(conv1, 1)
             conv2 = self._convs[1].evaluate(conv1)
+            conv3 = self._convs[2].evaluate(conv2)
+            conv_out = self._convs[3].evaluate(conv3)
+            #flatten convolved spatial dimensions and separate into batches
+            conv_out = tf.reshape(conv_out, [flt[0], flt[1]*flt[2], -1, 3])
+            s1 = tf.reduce_sum(conv_out, axis=[2])
+            #s1 = tf.nn.elu(s1)
+            out = tf.reduce_mean(s1, axis=[1])
 
-            flattened = l_ops.flatten_batch(conv2)
-            fc1 = self._rep_fc.evaluate(flattened)
-            fc1 = tf.reshape(fc1,
-                             [flt[0], flt[1]*flt[2], -1])
-            fc1 = tf.reduce_mean(fc1, axis=[1])
-            fc1 = tf.nn.elu(fc1)
+            #flattened = l_ops.flatten_batch(conv1)
+
+            #fc1 = self._rep_fc.evaluate(flattened)
+            #fc1 = tf.reshape(fc1,
+             #                [flt[0], flt[1]*flt[2], -1])
+            #fc1 = tf.reduce_mean(fc1, axis=[1])
+            #fc1 = tf.nn.elu(fc1)
+            #fc2 = self._inst_fc.evaluate(fc1)
+            #if training:
+             #   fc1 = tf.nn.dropout(fc1, 0.5)
 
             #fc2 = self._inst_fc.evaluate(fc1)
             #fc2 = tf.reshape(fc2,
@@ -144,7 +163,7 @@ class MultiInstanceConv3D(SGNNBase):
             #fc2 = tf.reduce_mean(fc2, axis=[1])
             #fc2 = tf.nn.sigmoid(fc2)
 
-            out = self._fc3.evaluate(fc1)
+            #out = self._fc3.evaluate(fc1)
 
         return out
 
